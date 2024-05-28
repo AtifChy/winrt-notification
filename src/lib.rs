@@ -5,7 +5,7 @@
 
 //! An incomplete wrapper over the WinRT toast api
 //!
-//! Tested in Windows 10 and 8.1. Untested in Windows 8, might work.
+//! Tested in Windows 11, 10 and 8.1. Untested in Windows 8, might work.
 //!
 //! Todo:
 //!
@@ -45,7 +45,7 @@ use std::fmt::Write;
 use std::path::Path;
 use std::str::FromStr;
 
-pub use windows::core::{Error, Result, HSTRING};
+pub use windows::core::{Error, HSTRING};
 pub use windows::UI::Notifications::ToastNotification;
 
 /// `ToastDismissalReason` is a struct representing the reason a toast notification was dismissed.
@@ -95,7 +95,7 @@ pub enum Sound {
 impl TryFrom<&str> for Sound {
     type Error = SoundParsingError;
 
-    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::from_str(value)
     }
 }
@@ -103,7 +103,7 @@ impl TryFrom<&str> for Sound {
 impl FromStr for Sound {
     type Err = SoundParsingError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "Default" => Sound::Default,
             "IM" => Sound::IM,
@@ -175,7 +175,7 @@ impl std::error::Error for SoundParsingError {}
 impl TryFrom<&str> for LoopableSound {
     type Error = SoundParsingError;
 
-    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::from_str(value)
     }
 }
@@ -183,7 +183,7 @@ impl TryFrom<&str> for LoopableSound {
 impl FromStr for LoopableSound {
     type Err = SoundParsingError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "Alarm" => LoopableSound::Alarm,
             "Alarm2" => LoopableSound::Alarm2,
@@ -255,7 +255,7 @@ pub enum Scenario {
     Default,
     /// This will be displayed pre-expanded and stay on the user's screen till dismissed. Audio will loop by default and will use alarm audio.
     Alarm,
-    /// This will be displayed pre-expanded and stay on the user's screen till dismissed..
+    /// This will be displayed pre-expanded and stay on the user's screen till dismissed.
     Reminder,
     /// This will be displayed pre-expanded in a special call format and stay on the user's screen till dismissed. Audio will loop by default and will use ringtone audio.
     IncomingCall,
@@ -264,7 +264,7 @@ pub enum Scenario {
 impl Toast {
     /// This can be used if you do not have a AppUserModelID.
     ///
-    /// However, the toast will erroniously report its origin as powershell.
+    /// However, the toast will erroneously report its origin as powershell.
     pub const POWERSHELL_APP_ID: &'static str = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\
                                                  \\WindowsPowerShell\\v1.0\\powershell.exe";
     /// Constructor for the toast builder.
@@ -372,7 +372,7 @@ impl Toast {
             );
             self
         } else {
-            // Win81 rejects the above xml so we fallback to a simpler call
+            // Win81 rejects the above xml, so we fall back to a simpler call
             self.image(source, alt_text)
         }
     }
@@ -390,7 +390,7 @@ impl Toast {
             );
             self
         } else {
-            // win81 rejects the above xml so we fallback to a simpler call
+            // win81 rejects the above xml, so we fall back to a simpler call
             self.image(source, alt_text)
         }
     }
@@ -436,7 +436,7 @@ impl Toast {
 
     /// Adds a button to the notification
     /// `content` is the text of the button.
-    /// `action` will be send as an argument [on_activated](Self::on_activated) when the button is clicked.
+    /// `action` will be sent as an argument [on_activated](Self::on_activated) when the button is clicked.
     pub fn add_button(mut self, content: &str, action: &str) -> Toast {
         self.buttons.push(Button {
             content: content.to_owned(),
@@ -447,19 +447,19 @@ impl Toast {
 
     // HACK: f is static so that we know the function is valid to call.
     //       this would be nice to remove at some point
-    pub fn on_activated<F: FnMut(Option<String>) -> Result<()> + Send + 'static>(
+    pub fn on_activated<F: FnMut(Option<String>) -> windows::core::Result<()> + Send + 'static>(
         mut self,
         mut f: F,
     ) -> Self {
-        self.on_activated = Some(TypedEventHandler::new(move |_, insp| {
-            f(Self::get_activated_action(insp))
+        self.on_activated = Some(TypedEventHandler::new(move |_, inspect| {
+            f(Self::get_activated_action(inspect))
         }));
         self
     }
 
-    fn get_activated_action(insp: &Option<IInspectable>) -> Option<String> {
-        if let Some(insp) = insp {
-            if let Ok(args) = insp.cast::<ToastActivatedEventArgs>() {
+    fn get_activated_action(inspect: &Option<IInspectable>) -> Option<String> {
+        if let Some(inspect) = inspect {
+            if let Ok(args) = inspect.cast::<ToastActivatedEventArgs>() {
                 if let Ok(arguments) = args.Arguments() {
                     if !arguments.is_empty() {
                         return Some(arguments.to_string());
@@ -492,7 +492,9 @@ impl Toast {
     ///     Ok(())
     /// }).show().expect("notification failed");
     /// ```
-    pub fn on_dismissed<F: Fn(Option<ToastDismissalReason>) -> Result<()> + Send + 'static>(
+    pub fn on_dismissed<
+        F: Fn(Option<ToastDismissalReason>) -> windows::core::Result<()> + Send + 'static,
+    >(
         mut self,
         f: F,
     ) -> Self {
@@ -513,8 +515,22 @@ impl Toast {
         None
     }
 
+    /// Clear all notifications of the current app_id from the action center
+    ///
+    /// # Example
+    /// ```rust
+    /// use tauri_winrt_notification::Toast;
+    ///
+    /// let toast = Toast::new(Toast::POWERSHELL_APP_ID);
+    /// toast.clear().expect("failed to clear notifications");
+    /// ```
+    pub fn clear(&self) -> windows::core::Result<()> {
+        let toast_history = ToastNotificationManager::History()?;
+        toast_history.ClearWithId(&HSTRING::from(&self.app_id))
+    }
+
     fn create_template(&self) -> windows::core::Result<ToastNotification> {
-        //using this to get an instance of XmlDocument
+        // using this to get an instance of XmlDocument
         let toast_xml = XmlDocument::new()?;
 
         let template_binding = if is_newer_than_windows81() {
@@ -570,6 +586,7 @@ impl Toast {
     /// Display the toast on the screen
     pub fn show(&self) -> windows::core::Result<()> {
         let toast_template = self.create_template()?;
+
         if let Some(handler) = &self.on_activated {
             toast_template.Activated(handler)?;
         }
