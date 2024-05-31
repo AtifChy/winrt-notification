@@ -36,7 +36,8 @@ use windows::{
     Data::Xml::Dom::XmlDocument,
     Foundation::TypedEventHandler,
     UI::Notifications::{
-        ToastActivatedEventArgs, ToastDismissedEventArgs, ToastNotificationManager,
+        ToastActivatedEventArgs, ToastDismissedEventArgs, ToastFailedEventArgs,
+        ToastNotificationManager,
     },
 };
 
@@ -56,6 +57,8 @@ pub enum Error {
     Os(#[from] windows::core::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Unknown error")]
+    Unknown,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -79,6 +82,7 @@ pub struct Toast {
     scenario: String,
     on_activated: Option<TypedEventHandler<ToastNotification, IInspectable>>,
     on_dismissed: Option<TypedEventHandler<ToastNotification, ToastDismissedEventArgs>>,
+    on_failed: Option<TypedEventHandler<ToastNotification, ToastFailedEventArgs>>,
     buttons: Vec<Button>,
 }
 
@@ -299,6 +303,7 @@ impl Toast {
             scenario: String::new(),
             on_activated: None,
             on_dismissed: None,
+            on_failed: None,
             buttons: Vec::new(),
         }
     }
@@ -527,6 +532,38 @@ impl Toast {
         None
     }
 
+    /// Set the function to be called when the toast fails to display
+    /// `f` will be called with the error that caused the toast to fail.
+    ///
+    /// # Example
+    /// ```rust
+    /// use tauri_winrt_notification::{Toast, Error};
+    ///
+    /// let toast = Toast::new(Toast::POWERSHELL_APP_ID);
+    /// toast.title("Fail Test").on_failed(|e| {
+    ///     eprintln!("Error: {:?}", e);
+    /// }).show().expect("notification failed");
+    /// ```
+    pub fn on_failed<F>(mut self, f: F) -> Self
+    where
+        F: Fn(Error) + Send + 'static,
+    {
+        self.on_failed = Some(TypedEventHandler::new(move |_, args| {
+            f(Self::get_failed_error(args));
+            Ok(())
+        }));
+        self
+    }
+
+    fn get_failed_error(args: &Option<ToastFailedEventArgs>) -> Error {
+        if let Some(args) = args {
+            if let Ok(error) = args.ErrorCode() {
+                return Error::Os(error.into());
+            }
+        }
+        Error::Unknown
+    }
+
     fn create_template(&self) -> Result<ToastNotification> {
         //using this to get an instance of XmlDocument
         let toast_xml = XmlDocument::new()?;
@@ -584,12 +621,15 @@ impl Toast {
     /// Display the toast on the screen
     pub fn show(&self) -> Result<()> {
         let toast_template = self.create_template()?;
+
         if let Some(handler) = &self.on_activated {
             toast_template.Activated(handler)?;
         }
-
         if let Some(handler) = &self.on_dismissed {
             toast_template.Dismissed(handler)?;
+        }
+        if let Some(handler) = &self.on_failed {
+            toast_template.Failed(handler)?;
         }
 
         let toast_notifier =
